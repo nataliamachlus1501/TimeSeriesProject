@@ -1,0 +1,272 @@
+---
+title: "Projekt zaliczeniowy - analiza szeregów czasowych"
+author: "Natalia Machlus i Julia Taborek"
+output: pdf_document
+---
+
+**Wczytanie danych **
+```{r}
+dane <- read.csv("C:/Users/natal/Desktop/5_sem/szeregi_czas/dane2.csv")
+```
+Przekształcamy dane do szeregu czasowego:
+```{r}
+danets <- ts(dane$x, end = c(2022,12), frequency = 12)
+```
+Wyświetlamy wykres szeregu:
+```{r}
+#library(forecast)
+par(mar = c(1,1,1,1))
+tsdisplay(danets)
+```
+Szereg nie jest stacjonarny oraz wydaje nam się, że nie występuje w nim sezonowość ani trend. Nie ma stałej wartości oczekiwanej i stałej wariancji.
+
+```{r}
+#funkcja mowiaca ile razy nalezy zroznicowac zeby usunac trend
+d.opt<-ndiffs(danets)
+d.opt
+#aby pozbyc sie sezonowosci
+D.opt<-nsdiffs(danets)
+D.opt
+```
+Widzimy, że w naszym szeregu czasowym występuje trend. Aby się go pozbyć musimy zróżnicować jednokrotnie szereg. Nie występuje sezonowość. 
+
+Test statystyczny oceniający stacjonarność:
+```{r}
+reg <- lm(danets ~ time(danets))
+par(mfrow = c(2,2))
+plot(reg)
+summary(reg)
+```
+Na podstawie testu F możemy odrzucić hipotezę zerową: szereg Xt nie zależy liniowo od czasu. Co potwierdza nasze przypuszczenia, że szereg jest niestacjonarny.
+```{r}
+resid.dane <- resid(reg)
+plot(resid.dane)
+resid.ts <- ts(resid.dane, start = start(danets), frequency = 12)
+plot(resid.ts)
+sd(resid(reg))
+```
+
+# 2. Przekształcenia do szeregu stacjonarnego
+Ponieważ nasz wyjściowy szereg jest niestacjonarny to przekształcimy go za pomocą różnicowania do szeregu stacjonarnego. 
+```{r}
+tsdiff <- diff(danets)
+tsdisplay(tsdiff)
+```
+Sprawdzamy za pomocą regresji, czy nasz szereg po zrózniocowaniu jest stacjonarny:
+```{r}
+reg.st <- lm(tsdiff ~ time(tsdiff))
+summary(reg.st)
+```
+Przyjmujemy hipotezę zerową - szereg nie zależy od czasu. Otrzymany szereg jest stacjonarny.
+
+# 3. Dopasowanie modelu AR(p) i MA(q)
+W celu dopasowania modelu MA(q) patrzymy na wykres acf dla zróżnicowanego szeregu.
+```{r}
+acf(tsdiff)
+```
+Na podstawie wykresu dopasowujemy model MA(12).
+
+Aby dopasować model AR(p) patrzymy na wykres PACF dla stacjonarnego szeregu.
+```{r}
+pacf(tsdiff)
+```
+
+Według wykresu dobrym dopasowaniem będzie AR(3). Sprawdzamy jeszcze za pomocą 2 metod:
+
+```{r}
+# model optymalny wedug AIC
+ar.optym.aic<-ar(tsdiff,aic=T) # metodą AIC
+print(ar.optym.aic)
+```
+Metoda AIC potwierdza, że najlepszym dopasowaniem jest AR(3).
+```{r}
+ar.aic<-ar.optym.aic$aic # różnice AIC(model_optymalny)-AIC(model_AR(p))
+print(ar.aic)
+```
+Najmniejsza różnica jest przy modelu rzędu 3, a więc zostajemy przy modelu AR(3).
+
+
+```{r}
+# wykres różnic
+plot(as.numeric(names(ar.aic)),ar.aic,
+     xlab="rząd modelu autoregresji (p)",
+     ylab="porównanie kryterium AIC",
+     type="b")
+```
+Wyestymowane współczynniki metodą Yule - Walkera:
+```{r}
+ar.yw<-ar(tsdiff,order.max = 3,aic=FALSE) 
+print(ar.yw)
+```
+
+# 4. Dopasowanie danych SARIMA dla oryginalnego modelu.
+
+Model MA(12) dla oryginalnych danych <-> ARIMA(0,1,12)
+```{r}
+m1<-Arima(danets,order=c(0,1,12))
+summary(m1)
+```
+Model AR(3) dla oryginalnych danych <-> ARIMA(3,1,0)
+
+```{r}
+m2<-Arima(danets,order=c(3,1,0))
+summary(m2)
+```
+Modele mają zbliżone do siebie wartości kryteriów informacyjnych i błędóW, więc porównamy je za pomocą diagnostyki.
+
+Sprawdziłyśmy różne automatyczne dopasowania modelu arima i ostetcznie wybrałyśmy model najlepszy pod względem kryterium AIC - ARIMA(1,1,1)(2,0,1)[12].
+```{r}
+autoarima <- auto.arima(danets, ic = "aic")
+autoarima
+```
+
+# 5. Diagnostyka modeli
+
+Diagnostyka reszt:
+
+```{r}
+tsdiag(m1)
+tsdiag(m2)
+```
+Na podstawie wykresóW reszt możemy przypuszczać, że reszty są losowe. Sprawdzamy nasze założenie za pomocą testu Ljunga-Boxa.
+```{r}
+m1.resid<-residuals(m1)
+m2.resid<-residuals(m2)
+
+Box.test(m1.resid,type="Ljung-Box")
+Box.test(m2.resid,type="Ljung-Box")
+```
+Na podstawie testu Ljunga-Boxa w przypadku obu modeli nie odrzucamy hipotezy zerowej mówiącej o tym, że reszty są losowe.
+
+```{r}
+hist(m1.resid) 
+qqnorm(m1.resid)
+qqline(m1.resid)
+```
+Rozkład reszt 1 modelu przypomina normlany. Na ogonach widzimy lekkie niedopasowania.
+```{r}
+hist(m2.resid)
+qqnorm(m2.resid)
+qqline(m2.resid)
+```
+W przypadku 2 modelu histogram reszt bardziej przypomina rozkład normalny, jednak na wykresach kwantyl - kwantyl dla obydwu modeli widzimy niedopasowania na ogonach.
+
+Następnie sprawdzamy za pomocą testów Shapiro-Wilka i Kolmogrova - Smirnova, czy reszty z naszych modeli mają rozkład normalny.
+
+```{r}
+shapiro.test(m1.resid)
+ks.test(m1.resid,"pnorm")
+```
+
+```{r}
+shapiro.test(m2.resid)
+ks.test(m2.resid,"pnorm")
+```
+Dla obydwu modeli nie odrzucamy hipotezy zerowej - reszty mają rozkład normalny.
+
+Następnie sprawdzamy, które współczynniki są istotne w naszych modelach:
+```{r}
+coeff1<-m1$coef
+coeff2<-m2$coef
+
+# liczymy blad standardowy
+coef.std.1<-sqrt(diag(m1$var.coef))
+coef.std.2<-sqrt(diag(m2$var.coef))
+
+ratio1<-coeff1/coef.std.1/1.96
+ratio2<-coeff2/coef.std.2/1.96
+
+ratio1
+#istotne, gdy abs(ratio1)>=1
+istotne<-which(abs(ratio1)>=1)
+istotne
+```
+W pierwszym modelu istotne są tylko współczynniki 1-3.
+
+Tworzymy model, który zawiera tylko istone współczynniki:
+```{r}
+m1.fixed<-numeric(12)# tworzymy wektor z samych 0
+# te wspolrzedne ktore byly istotne zamieniamy na NA
+m1.fixed[istotne]<-NA
+# skoryguje model m1, od nowa uzywam funkcji ARIMA
+# m1.is - od istotne
+# fixed = wektorowi, zadekralowalismy wspolczynniki 
+# model dopasuje tylko wspolczynniki ktore maja Na,te istotne
+m1.is<-Arima(danets,order=c(0,1,12),fixed=m1.fixed)
+
+summary(m1.is)
+```
+Następnie sprawdzamy, czy nowy model jest lepszy od orginalnego m1:
+```{r}
+# oryginalny model - nowy model
+m1$aic-m1.is$aic 
+m1$aicc-m1.is$aicc
+m1$bic-m1.is$bic
+```
+Nowy model jest lepszy od oryginalengo niezależnie od tego, które kryterium informacyjne weźmiemy pod uwagę.
+
+Następnie sprawdzamy, które współczynniki w modelu m2 są istotne:
+```{r}
+ratio2
+istotne2<-which(abs(ratio2)>=1)
+istotne2
+```
+Wszystkie współczynniki okazały się istotne.
+
+Diagnostyka 3 modelu:
+```{r}
+tsdiag(autoarima)
+aa.resid<-residuals(autoarima)
+Box.test(aa.resid,type="Ljung-Box")
+```
+Na podstawie testu Ljunga-Boxa nie odrzucamy hipotezy zerowej, że reszty są zerowe.
+
+```{r}
+hist(aa.resid) 
+qqnorm(aa.resid)
+qqline(aa.resid)
+```
+
+```{r}
+shapiro.test(aa.resid)
+ks.test(aa.resid,"pnorm")
+```
+Na podstawie powyższych testów nie odrzucamy hipotezy zerowej mówiącej, że reszty mają rozkład normalny.
+
+```{r}
+coeffa<-autoarima$coef
+
+# liczymy blad standardowy
+coef.std.a<-sqrt(diag(autoarima$var.coef))
+
+ratioa<-coeffa/coef.std.a/1.96
+
+ratioa
+istotnea<-which(abs(ratioa)>=1)
+istotnea
+```
+Tworzymy model, który zawiera tylko istone współczynniki:
+```{r}
+aa.fixed<-numeric(5)
+aa.fixed[istotnea]<-NA
+aa.is<-Arima(danets,order=c(1,1,1),seasonal=list(order=c(2,0,1),period=12), 
+               fixed=aa.fixed)
+
+autoarima$aic-aa.is$aic 
+autoarima$aicc-aa.is$aicc
+autoarima$bic-aa.is$bic
+```
+Otrzymany model jest lepszy od oryginalnego.
+
+# 6. Prognozy
+Prognozy dla modelu 1 z istotnymi współczynnikami:
+```{r}
+p1<-forecast(m1.is,h=24)
+p2<-forecast(m2,h=24)
+p3<-forecast(aa.is,h=24)
+
+par(mfrow=c(3,1))
+plot(p1)
+plot(p2)
+plot(p3)
+```
